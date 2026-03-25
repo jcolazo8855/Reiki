@@ -1005,63 +1005,282 @@ def page_client_management():
 # ══════════════════════════════════════════════════════════════════════════════
 #  PAGE 9 — SOUNDSCAPE GENERATOR
 # ══════════════════════════════════════════════════════════════════════════════
+
+# ── MP3 library helpers ───────────────────────────────────────────────────────
+MP3_DIR = os.path.join(DATA_DIR, "sounds")
+os.makedirs(MP3_DIR, exist_ok=True)
+
+def _mp3_slug(chakra_name: str) -> str:
+    return chakra_name.lower().replace(" ", "_")
+
+def _mp3_path(chakra_name: str) -> str:
+    return os.path.join(MP3_DIR, f"{_mp3_slug(chakra_name)}.mp3")
+
+def _mp3_meta_path() -> str:
+    return os.path.join(MP3_DIR, "manifest.json")
+
+def load_mp3_manifest() -> dict:
+    p = _mp3_meta_path()
+    if os.path.exists(p):
+        try:
+            with open(p) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_mp3_manifest(manifest: dict):
+    with open(_mp3_meta_path(), "w") as f:
+        json.dump(manifest, f, indent=2, default=str)
+
+def save_mp3(chakra_name: str, file_bytes: bytes, original_filename: str):
+    """Persist an uploaded MP3 to disk and update the manifest."""
+    dest = _mp3_path(chakra_name)
+    with open(dest, "wb") as f:
+        f.write(file_bytes)
+    manifest = load_mp3_manifest()
+    manifest[chakra_name] = {
+        "filename":          original_filename,
+        "saved_path":        dest,
+        "uploaded_at":       datetime.now().isoformat(),
+        "size_kb":           round(len(file_bytes) / 1024, 1),
+    }
+    save_mp3_manifest(manifest)
+
+def delete_mp3(chakra_name: str):
+    """Remove the MP3 file and its manifest entry."""
+    dest = _mp3_path(chakra_name)
+    if os.path.exists(dest):
+        os.remove(dest)
+    manifest = load_mp3_manifest()
+    manifest.pop(chakra_name, None)
+    save_mp3_manifest(manifest)
+
+def mp3_exists(chakra_name: str) -> bool:
+    return os.path.exists(_mp3_path(chakra_name))
+
+def read_mp3(chakra_name: str) -> bytes:
+    with open(_mp3_path(chakra_name), "rb") as f:
+        return f.read()
+
+# ── page ──────────────────────────────────────────────────────────────────────
 def page_soundscape():
-    page_header("🎵 Chakra Soundscape Generator","Generate healing frequencies for each energy center")
-    c1,c2 = st.columns([1,2])
+    page_header("🎵 Chakra Soundscape Generator","Generate healing tones or play your own custom tracks")
 
-    with c1:
-        st.markdown('<div class="reiki-card">', unsafe_allow_html=True)
-        sel   = st.selectbox("Chakra", list(CHAKRAS.keys()))
-        chk   = CHAKRAS[sel]; color = chk["color"]; base = chk["frequency"]
-        st.markdown(f"""<div style="text-align:center;padding:16px;background:{color}18;
-                            border-radius:10px;border:1px solid {color}44;margin:10px 0;">
-            <div style="font-size:36px;">{chk['emoji']}</div>
-            <div style="font-size:28px;font-weight:700;color:{color};">{base} Hz</div>
-            <div style="color:#9ca3af;font-size:12px;margin-top:4px;">Solfeggio · Note {chk['note']}</div>
+    tab_gen, tab_lib = st.tabs(["🔊 Generate Tone", "🎼 Custom MP3 Library"])
+
+    # ── Tab 1: Generate Tone (unchanged core logic) ───────────────────────────
+    with tab_gen:
+        c1, c2 = st.columns([1, 2])
+
+        with c1:
+            st.markdown('<div class="reiki-card">', unsafe_allow_html=True)
+            sel   = st.selectbox("Chakra", list(CHAKRAS.keys()), key="gen_chakra")
+            chk   = CHAKRAS[sel]; color = chk["color"]; base = chk["frequency"]
+            st.markdown(f"""<div style="text-align:center;padding:16px;background:{color}18;
+                                border-radius:10px;border:1px solid {color}44;margin:10px 0;">
+                <div style="font-size:36px;">{chk['emoji']}</div>
+                <div style="font-size:28px;font-weight:700;color:{color};">{base} Hz</div>
+                <div style="color:#9ca3af;font-size:12px;margin-top:4px;">Solfeggio · Note {chk['note']}</div>
+            </div>""", unsafe_allow_html=True)
+            custom = st.number_input("Custom frequency (Hz)", 20, 20000, base, step=1)
+            dur    = st.slider("Duration (seconds)", 5, 60, 15)
+            wtype  = st.selectbox("Waveform", ["Harmonics (rich, warm)", "Pure Sine (clean)"])
+            if st.button("▶ Generate & Play", use_container_width=True):
+                with st.spinner("Generating..."):
+                    wav = make_wav(custom, dur, pure=("Pure" in wtype))
+                st.audio(wav, format="audio/wav")
+                st.success(f"🎵 {custom} Hz · {dur}s")
+                st.download_button("⬇️ Download WAV", wav,
+                                   file_name=f"{_mp3_slug(sel)}_{custom}hz.wav",
+                                   mime="audio/wav", use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        with c2:
+            st.markdown("### All Chakra Frequencies")
+            fh = "<div style='display:flex;flex-direction:column;gap:8px;'>"
+            for name, data in CHAKRAS.items():
+                c = data["color"]
+                has_mp3 = mp3_exists(name)
+                badge = (f'<span style="font-size:10px;background:{c}22;border:1px solid {c}55;'
+                         f'color:{c};border-radius:4px;padding:1px 6px;margin-left:8px;">🎵 custom</span>'
+                         if has_mp3 else "")
+                fh += f"""<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;
+                            background:{c}0d;border:1px solid {c}33;border-radius:8px;">
+                    <span style="font-size:20px;width:26px;">{data['emoji']}</span>
+                    <div style="flex:1;">
+                        <div style="color:{c};font-weight:600;font-size:14px;">{name} — {data['sanskrit']}{badge}</div>
+                        <div style="color:#6b7280;font-size:11px;">Element: {data['element']} · Note: {data['note']}</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-size:22px;font-weight:700;color:{c};">{data['frequency']}</div>
+                        <div style="color:#6b7280;font-size:10px;">Hz</div>
+                    </div>
+                </div>"""
+            fh += "</div>"
+            st.markdown(fh, unsafe_allow_html=True)
+
+            st.markdown("### Waveform Preview")
+            sv = st.selectbox("Visualize", list(CHAKRAS.keys()), key="vis_c")
+            vd = CHAKRAS[sv]; tv = np.linspace(0, .05, 2000); fv = vd["frequency"]
+            wv = (.5 * np.sin(2*np.pi*fv*tv)
+                + .2 * np.sin(2*np.pi*fv*2*tv)
+                + .15 * np.sin(2*np.pi*fv*.5*tv))
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=tv*1000, y=wv, mode="lines",
+                                     line=dict(color=vd["color"], width=1.5)))
+            fig.update_layout(
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font_color="#9ca3af", height=150, margin=dict(t=10, b=30),
+                xaxis=dict(title="ms", gridcolor="rgba(255,255,255,0.05)"),
+                yaxis=dict(gridcolor="rgba(255,255,255,0.05)"))
+            st.plotly_chart(fig, use_container_width=True)
+
+    # ── Tab 2: Custom MP3 Library ─────────────────────────────────────────────
+    with tab_lib:
+        manifest = load_mp3_manifest()
+
+        st.markdown("""<div style="color:#9ca3af;font-size:13px;margin-bottom:20px;line-height:1.7;">
+            Upload a custom MP3 for any chakra — guided meditations, binaural beats, nature sounds, singing bowls.
+            Files are saved permanently and replace any previous track for that chakra.
         </div>""", unsafe_allow_html=True)
-        custom = st.number_input("Custom frequency (Hz)", 20, 20000, base, step=1)
-        dur    = st.slider("Duration (seconds)", 5, 60, 15)
-        wtype  = st.selectbox("Waveform",["Harmonics (rich, warm)","Pure Sine (clean)"])
-        if st.button("▶ Generate & Play", use_container_width=True):
-            with st.spinner("Generating..."):
-                wav = make_wav(custom, dur, pure=("Pure" in wtype))
-            st.audio(wav, format="audio/wav")
-            st.success(f"🎵 {custom} Hz · {dur}s")
-            st.download_button("⬇️ Download WAV", wav,
-                               file_name=f"{sel.lower().replace(' ','_')}_{custom}hz.wav",
-                               mime="audio/wav", use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
 
-    with c2:
-        st.markdown("### All Chakra Frequencies")
-        fh = "<div style='display:flex;flex-direction:column;gap:8px;'>"
-        for name,data in CHAKRAS.items():
-            c = data["color"]
-            fh += f"""<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;
-                        background:{c}0d;border:1px solid {c}33;border-radius:8px;">
-                <span style="font-size:20px;width:26px;">{data['emoji']}</span>
-                <div style="flex:1;">
-                    <div style="color:{c};font-weight:600;font-size:14px;">{name} — {data['sanskrit']}</div>
-                    <div style="color:#6b7280;font-size:11px;">Element: {data['element']} · Note: {data['note']}</div>
-                </div>
-                <div style="text-align:right;">
-                    <div style="font-size:22px;font-weight:700;color:{c};">{data['frequency']}</div>
-                    <div style="color:#6b7280;font-size:10px;">Hz</div>
-                </div>
-            </div>"""
-        fh += "</div>"
-        st.markdown(fh, unsafe_allow_html=True)
-        st.markdown("### Waveform Preview")
-        sv = st.selectbox("Visualize", list(CHAKRAS.keys()), key="vis_c")
-        vd = CHAKRAS[sv]; tv = np.linspace(0,.05,2000); fv = vd["frequency"]
-        wv = .5*np.sin(2*np.pi*fv*tv) + .2*np.sin(2*np.pi*fv*2*tv) + .15*np.sin(2*np.pi*fv*.5*tv)
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=tv*1000, y=wv, mode="lines", line=dict(color=vd["color"],width=1.5)))
-        fig.update_layout(plot_bgcolor="rgba(0,0,0,0)",paper_bgcolor="rgba(0,0,0,0)",
-            font_color="#9ca3af",height=150,margin=dict(t=10,b=30),
-            xaxis=dict(title="ms",gridcolor="rgba(255,255,255,0.05)"),
-            yaxis=dict(gridcolor="rgba(255,255,255,0.05)"))
-        st.plotly_chart(fig, use_container_width=True)
+        # ── Library overview grid ────────────────────────────────────────────
+        st.markdown("#### 🗂️ Library Overview")
+        grid_cols = st.columns(7)
+        for i, (name, data) in enumerate(CHAKRAS.items()):
+            with grid_cols[i]:
+                has = mp3_exists(name)
+                c   = data["color"]
+                bg  = f"{c}22" if has else "rgba(255,255,255,0.03)"
+                bc  = f"{c}66" if has else "rgba(255,255,255,0.08)"
+                icon = "🎵" if has else "○"
+                meta = manifest.get(name, {})
+                size_str = f"{meta.get('size_kb','?')} KB" if has else "—"
+                st.markdown(f"""<div style="text-align:center;padding:12px 6px;background:{bg};
+                                    border:1px solid {bc};border-radius:8px;cursor:default;">
+                    <div style="font-size:20px;">{data['emoji']}</div>
+                    <div style="font-size:11px;font-weight:600;color:{'#e9d5ff' if has else '#4b5563'};
+                                margin-top:4px;line-height:1.3;">{name}</div>
+                    <div style="font-size:16px;margin-top:4px;">{icon}</div>
+                    <div style="font-size:10px;color:#4b5563;margin-top:2px;">{size_str}</div>
+                </div>""", unsafe_allow_html=True)
+
+        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
+        # ── Per-chakra upload / manage panel ────────────────────────────────
+        col_up, col_play = st.columns([1, 1])
+
+        with col_up:
+            st.markdown("#### ⬆️ Upload / Replace Track")
+            upload_chakra = st.selectbox("Chakra", list(CHAKRAS.keys()), key="mp3_upload_chakra")
+            uchk  = CHAKRAS[upload_chakra]
+            ucolor = uchk["color"]
+
+            # Show current track status
+            if mp3_exists(upload_chakra):
+                meta = manifest.get(upload_chakra, {})
+                st.markdown(f"""<div style="padding:10px 14px;background:{ucolor}11;
+                                    border:1px solid {ucolor}44;border-radius:8px;margin-bottom:12px;">
+                    <div style="color:{ucolor};font-weight:600;font-size:13px;">✅ Custom track loaded</div>
+                    <div style="color:#9ca3af;font-size:12px;margin-top:4px;">
+                        📄 {meta.get('filename','unknown')}<br>
+                        📦 {meta.get('size_kb','?')} KB &nbsp;·&nbsp;
+                        🕐 {str(meta.get('uploaded_at',''))[:10]}
+                    </div>
+                </div>""", unsafe_allow_html=True)
+            else:
+                st.markdown(f"""<div style="padding:10px 14px;background:rgba(255,255,255,0.03);
+                                    border:1px solid rgba(255,255,255,0.08);border-radius:8px;margin-bottom:12px;">
+                    <div style="color:#6b7280;font-size:13px;">○ No custom track — using generated tone</div>
+                </div>""", unsafe_allow_html=True)
+
+            uploaded_file = st.file_uploader(
+                f"Upload MP3 for {upload_chakra}",
+                type=["mp3"],
+                key=f"uploader_{upload_chakra}",
+                help="MP3 files only. Will permanently replace any existing track for this chakra.",
+            )
+
+            if uploaded_file is not None:
+                file_bytes = uploaded_file.read()
+                size_kb    = round(len(file_bytes) / 1024, 1)
+
+                st.markdown(f"""<div style="padding:10px 14px;background:rgba(34,197,94,0.08);
+                                    border:1px solid rgba(34,197,94,0.3);border-radius:8px;margin:8px 0;">
+                    <div style="color:#4ade80;font-size:13px;font-weight:600;">📁 Ready to save</div>
+                    <div style="color:#9ca3af;font-size:12px;margin-top:4px;">
+                        {uploaded_file.name} &nbsp;·&nbsp; {size_kb} KB
+                    </div>
+                </div>""", unsafe_allow_html=True)
+
+                action_label = "🔄 Replace Track" if mp3_exists(upload_chakra) else "💾 Save Track"
+                if st.button(action_label, use_container_width=True, key="btn_save_mp3"):
+                    save_mp3(upload_chakra, file_bytes, uploaded_file.name)
+                    st.success(f"✅ Saved '{uploaded_file.name}' for {upload_chakra} chakra!")
+                    st.rerun()
+
+            # Delete button — only show if a track exists
+            if mp3_exists(upload_chakra):
+                st.markdown("")
+                if st.button(f"🗑️ Delete {upload_chakra} track", use_container_width=True,
+                             key="btn_del_mp3"):
+                    delete_mp3(upload_chakra)
+                    st.warning(f"Track removed for {upload_chakra}.")
+                    st.rerun()
+
+        with col_play:
+            st.markdown("#### ▶️ Play Custom Tracks")
+            play_chakra = st.selectbox("Select chakra to play", list(CHAKRAS.keys()),
+                                       key="mp3_play_chakra")
+            pchk  = CHAKRAS[play_chakra]
+            pcolor = pchk["color"]
+
+            if mp3_exists(play_chakra):
+                meta = manifest.get(play_chakra, {})
+                st.markdown(f"""<div style="padding:14px;background:{pcolor}0d;
+                                    border:1px solid {pcolor}44;border-radius:10px;margin-bottom:12px;">
+                    <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+                        <span style="font-size:28px;">{pchk['emoji']}</span>
+                        <div>
+                            <div style="color:{pcolor};font-weight:600;">{play_chakra}</div>
+                            <div style="color:#6b7280;font-size:12px;">{pchk['sanskrit']} · {pchk['frequency']} Hz</div>
+                        </div>
+                    </div>
+                    <div style="color:#9ca3af;font-size:12px;">📄 {meta.get('filename','—')}</div>
+                </div>""", unsafe_allow_html=True)
+                mp3_bytes = read_mp3(play_chakra)
+                st.audio(mp3_bytes, format="audio/mp3")
+                st.download_button(
+                    "⬇️ Download this track", mp3_bytes,
+                    file_name=f"{_mp3_slug(play_chakra)}_custom.mp3",
+                    mime="audio/mp3", use_container_width=True,
+                    key="dl_mp3_track")
+            else:
+                st.markdown(f"""<div style="padding:20px;text-align:center;background:rgba(255,255,255,0.02);
+                                    border:1px dashed rgba(255,255,255,0.1);border-radius:10px;color:#4b5563;">
+                    <div style="font-size:28px;margin-bottom:8px;">{pchk['emoji']}</div>
+                    <div style="font-size:13px;">No custom track for <b style="color:#6b7280;">{play_chakra}</b></div>
+                    <div style="font-size:12px;margin-top:6px;">Upload one using the panel on the left.</div>
+                </div>""", unsafe_allow_html=True)
+
+            # Full library player — show all uploaded tracks
+            uploaded_names = [name for name in CHAKRAS if mp3_exists(name)]
+            if len(uploaded_names) > 1:
+                st.markdown("---")
+                st.markdown("**All uploaded tracks**")
+                for name in uploaded_names:
+                    meta  = manifest.get(name, {})
+                    cdata = CHAKRAS[name]
+                    c     = cdata["color"]
+                    st.markdown(f"""<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;
+                                        background:{c}0d;border:1px solid {c}33;border-radius:8px;margin-bottom:6px;">
+                        <span style="font-size:18px;">{cdata['emoji']}</span>
+                        <div style="flex:1;">
+                            <div style="color:{c};font-size:13px;font-weight:600;">{name}</div>
+                            <div style="color:#6b7280;font-size:11px;">{meta.get('filename','—')} · {meta.get('size_kb','?')} KB</div>
+                        </div>
+                    </div>""", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  PAGE 10 — DISTANCE HEALING BOARD
