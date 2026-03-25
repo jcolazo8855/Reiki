@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-#  🌟 REIKI STUDIO — Complete Healing Arts Application  (v2 — all bugs fixed)
+#  🌟 ROXANNE's REIKI STUDIO — Complete Healing Arts Application  (v2 — all bugs fixed)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 import streamlit as st
@@ -11,7 +11,7 @@ import json, os, io, wave as wav_lib, math
 import streamlit.components.v1 as components
 
 # ── CONFIG ─────────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Reiki Studio", page_icon="☯", layout="wide",
+st.set_page_config(page_title="Roxanne's Reiki Studio", page_icon="☯", layout="wide",
                    initial_sidebar_state="expanded")
 
 # ── GLOBAL CSS ─────────────────────────────────────────────────────────────────
